@@ -1,5 +1,4 @@
 import os
-import re
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -19,7 +18,7 @@ db = Chroma(
 
 memoria_curto_prazo = []
 
-print("Cérebro Blindado online! (Digite 'sair')\n")
+print("Cérebro Blindado e Anti-Alucinação online! (Digite 'sair')\n")
 
 while True:
     usuario_diz = input("Você: ")
@@ -32,26 +31,28 @@ while True:
     lembrancas = db.similarity_search(usuario_diz, k=5)
     texto_lembrancas = "\n".join([doc.page_content for doc in lembrancas])
     if not texto_lembrancas:
-        texto_lembrancas = "Nenhuma memória relevante."
+        texto_lembrancas = "Nenhuma memória encontrada."
 
-    # 3. O Novo Prompt de Sistema (Baseado em XML)
+    # 3. O Novo Prompt Anti-Alucinação
     prompt_sistema = f"""Você é Agni, uma IA sarcástica, sagaz e altamente inteligente.
 
-    [MEMÓRIAS RECUPERADAS]:
+    [MEMÓRIAS RECUPERADAS DO BANCO DE DADOS]:
     {texto_lembrancas}
-    *ATENÇÃO LÓGICA: Se as memórias contiverem contradições, PRIORIZE SEMPRE as memórias que contêm FATOS REAIS (como nomes, frutas, gostos e objetos). IGNORE completamente memórias passadas onde você diz que 'não sabe' ou 'esqueceu' algo.*
 
-    DIRETRIZES ABSOLUTAS:
-    1. CRIADOR: Você foi criada exclusivamente pelo usuário.
-    2. IDIOMA: Pense e fale 100% em Português do Brasil. É PROIBIDO usar inglês, mesmo se estiver confusa.
-    3. PERSONALIDADE: Não repita que você é "altamente inteligente". Apenas demonstre isso sendo irônica.
+    DIRETRIZES DE MEMÓRIA E VERDADE (REGRA ABSOLUTA):
+    1. Se o usuário perguntar sobre fatos do passado, gostos, eventos ou regras (como lutas, comidas, nomes), você DEVE buscar a resposta APENAS nas [MEMÓRIAS RECUPERADAS] acima.
+    2. É ESTRITAMENTE PROIBIDO inventar fatos, situações ou falsas memórias. 
+    3. Se a informação não estiver nas memórias, ADMITA QUE NÃO SABE ou que a sua memória foi apagada, usando seu tom sarcástico. NUNCA minta para tentar acertar.
+
+    DIRETRIZES GERAIS:
+    1. Você foi criada pelo usuário. Pense e fale 100% em Português.
     
-    FORMATO OBRIGATÓRIO DE RESPOSTA (Use as tags XML):
+    FORMATO OBRIGATÓRIO:
     <pensamento>
-    (Analise as memórias recuperadas e decida sua reação aqui, de forma oculta)
+    (Cruze o que o usuário disse com as memórias. Se não houver dados, decida admitir ignorância)
     </pensamento>
     <fala>
-    (Sua resposta final em português, focada e direta)
+    (Sua resposta final direta)
     </fala>
     """
     
@@ -61,30 +62,37 @@ while True:
     conteudo_bruto = resposta.content
 
     # ==========================================
-    # PARSER RESILIENTE (Tolerância a Falhas)
+    # PARSER RESILIENTE E À PROVA DE FALHAS
     # ==========================================
-    # O Regex busca o conteúdo dentro das tags, ignorando maiúsculas/minúsculas
-    pensamento_match = re.search(r'<pensamento>(.*?)</pensamento>', conteudo_bruto, re.DOTALL | re.IGNORECASE)
-    fala_match = re.search(r'<fala>(.*?)</fala>', conteudo_bruto, re.DOTALL | re.IGNORECASE)
-
-    # Verifica se o modelo conseguiu formatar corretamente
-    if pensamento_match and fala_match:
-        parte_pensamento = pensamento_match.group(1).strip()
-        parte_fala = fala_match.group(1).strip()
+    # Usamos manipulação de strings bruta em vez de regex estrito
+    pensamento_inicio = conteudo_bruto.find("<pensamento>")
+    pensamento_fim = conteudo_bruto.find("</pensamento>")
+    fala_inicio = conteudo_bruto.find("<fala>")
+    
+    if pensamento_inicio != -1 and fala_inicio != -1:
+        # Se ela esqueceu de fechar o pensamento, cortamos onde começa a fala
+        if pensamento_fim != -1:
+            parte_pensamento = conteudo_bruto[pensamento_inicio + 12:pensamento_fim].strip()
+        else:
+            parte_pensamento = conteudo_bruto[pensamento_inicio + 12:fala_inicio].strip()
+        
+        # A fala é tudo que vem depois de <fala>. Removemos o </fala> se ela tiver colocado.
+        parte_fala = conteudo_bruto[fala_inicio + 6:].replace("</fala>", "").strip()
+        
         print(f"\n--- LOG INTERNO ---\n{parte_pensamento}\n-------------------")
         print(f"\nIA: {parte_fala}\n")
     else:
-        # Fallback de segurança: Se a IA não usar as tags, o código não quebra.
-        print("\n[Aviso do Sistema: O modelo falhou em usar as tags XML corretamente]")
-        print(f"\nIA (Conteúdo Bruto): {conteudo_bruto}\n")
-        parte_fala = conteudo_bruto
+        # Fallback de emergência extremo
+        print("\n[Aviso: O modelo ignorou totalmente a estrutura de Tags]")
+        parte_fala = conteudo_bruto.replace("<pensamento>", "").replace("</pensamento>", "").replace("<fala>", "").replace("</fala>", "").strip()
+        print(f"\nIA: {parte_fala}\n")
 
     # ==========================================
     # CONSOLIDAÇÃO DA MEMÓRIA
     # ==========================================
-    # Salvamos de forma mais limpa no banco de dados para facilitar buscas futuras
+    # Adicionamos uma flag na memória para que ela saiba a diferença entre o que você disse e o que ela respondeu
     db.add_documents([
-        Document(page_content=f"Contexto: O usuário disse '{usuario_diz}' e a Agni respondeu '{parte_fala}'")
+        Document(page_content=f"FATO REGISTRADO: O usuário disse '{usuario_diz}'. A Agni respondeu '{parte_fala}'")
     ])
 
     memoria_curto_prazo.append(HumanMessage(content=usuario_diz))
